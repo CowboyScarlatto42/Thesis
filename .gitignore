@@ -7,8 +7,8 @@ venv/
 env/
 
 # Dataset directories and large outputs
-NeuS/
-SPE3R/
+NeuS
+SPE3R
 dataset_manipulation/verification_data
 hst_neus/
 
