@@ -10,7 +10,7 @@ env/
 NeuS
 SPE3R
 dataset_manipulation/verification_data
-hst_neus/
+hst_neus*/
 
 
 # Images, masks, archives and binary data
