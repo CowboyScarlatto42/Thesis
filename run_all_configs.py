@@ -59,7 +59,7 @@ CONFIGS: List[ExperimentConfig] = [
         {
             "name": "neus_1view",
             "case": "hst_neus_1views",
-            "conf_rel": "hst_1view.conf",  # relative to --conf-dir
+            "conf_rel": "hst_spe3r_case.conf",  
             "n_views": 1,
             "n_iters": 10000,
         }
@@ -68,7 +68,7 @@ CONFIGS: List[ExperimentConfig] = [
         {
             "name": "neus_4views",
             "case": "hst_neus_4views",
-            "conf_rel": "hst_4views.conf",  # relative to --conf-dir
+            "conf_rel": "hst_spe3r_case.conf",  
             "n_views": 4,
             "n_iters": 10000,
         }
@@ -77,12 +77,14 @@ CONFIGS: List[ExperimentConfig] = [
         {
             "name": "neus_8views",
             "case": "hst_neus_8views",
-            "conf_rel": "hst_8views.conf",  # relative to --conf-dir
+            "conf_rel": "hst_spe3r_case.conf",  
             "n_views": 8,
             "n_iters": 10000,
         }
     ),
 ]
+
+
 
 
 ###############################################################################
