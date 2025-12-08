@@ -156,7 +156,7 @@ def run_inference(exp_runner: Path, conf_path: Path, config: ExperimentConfig, c
 ###############################################################################
 
 def get_pred_mesh_path(exp_root: Path, config: ExperimentConfig) -> Path:
-    meshes_dir = exp_root / config.case / "meshes"
+    meshes_dir = exp_root / config.case / "wmask" / "meshes"
     if not meshes_dir.exists():
         raise FileNotFoundError(f"Meshes directory not found for {config.name}: {meshes_dir}")
 
