@@ -381,11 +381,11 @@ def main():
 
     # Use GT camera up vector so that with zero perturbations, R_lookat == R
     # In OpenCV convention, camera +Y points down, so camera up is -R.T[:, 1]
-    world_up = (-R.T[:, 1]).astype(np.float64)  # GT camera up (since +Y in OpenCV is down)
-    world_up = world_up / np.linalg.norm(world_up)
+    up_hint = (-R.T[:, 1]).astype(np.float64)  # GT camera up (since +Y in OpenCV is down)
+    up_hint = up_hint / np.linalg.norm(up_hint)
 
-    # Right axis (camera +X) = up x forward (normalized)
-    right = np.cross(world_up, forward)
+    # Right axis (camera +X) = forward x up_hint (right-handed frame)
+    right = np.cross(forward, up_hint)
     right_norm = np.linalg.norm(right)
     if right_norm < 1e-6:
         # Camera is looking straight up or down, use fallback
@@ -394,8 +394,9 @@ def main():
     else:
         right = right / right_norm
 
-    # True up axis = forward x right
-    up = np.cross(forward, right)
+    # True up axis = right x forward (ensures right-handed orthonormal frame)
+    up = np.cross(right, forward)
+    up = up / np.linalg.norm(up)
 
     # Build rotation matrix for world->camera (R_cw)
     # OpenCV camera has +Y down, so we use -up for the Y row
@@ -407,8 +408,8 @@ def main():
 
     print(f"[INFO] Forward (camera +Z): {forward}")
     print(f"[INFO] Right (camera +X): {right}")
-    print(f"[INFO] Up (world up projected): {up}")
-    print(f"[INFO] GT camera up (world_up): {world_up}")
+    print(f"[INFO] Up (computed): {up}")
+    print(f"[INFO] GT camera up (up_hint): {up_hint}")
     print(f"\n[INFO] Look-at rotation R (world->camera):\n{R_lookat}")
     print(f"[DEBUG] ||R - R_lookat||_F = {np.linalg.norm(R - R_lookat):.6e}")
     print(f"[DEBUG] det(R_lookat) = {np.linalg.det(R_lookat):.6f}")
