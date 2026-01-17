@@ -308,8 +308,18 @@ def main():
     # Compute GT spherical parameters using the same convention as the perturbation
     # elevation (rx0): angle above horizontal plane (arcsin of normalized Y component)
     rx0 = np.arcsin(v[1] / radius_base)
-    # azimuth (ry0): rotation around world +Y axis (atan2 of X/Z)
-    ry0 = np.arctan2(v[0], v[2])
+    # azimuth (ry0): rotation around world +Y axis
+    # Must account for cos(rx) scaling in the forward map:
+    #   x = r * sin(ry) * cos(rx)
+    #   z = r * cos(ry) * cos(rx)
+    # So: ry = atan2(x / (r*cos(rx)), z / (r*cos(rx)))
+    cos_rx0 = np.cos(rx0)
+    if abs(cos_rx0) < 1e-8:
+        # Camera looking straight up or down, azimuth is undefined
+        ry0 = 0.0
+    else:
+        ry0 = np.arctan2(v[0] / (radius_base * cos_rx0),
+                         v[2] / (radius_base * cos_rx0))
 
     print(f"[INFO] GT spherical angles:")
     print(f"       rx0 (elevation) = {np.rad2deg(rx0):.4f} deg ({rx0:.6f} rad)")
@@ -355,6 +365,7 @@ def main():
     ], dtype=np.float64)
 
     print(f"[INFO] New camera position: {cam_pos}")
+    print(f"[DEBUG] ||C - cam_pos|| = {np.linalg.norm(C - cam_pos):.6e}")
 
     # =========================================================================
     # Step 6: Compute look-at rotation (world->camera, OpenCV convention)
