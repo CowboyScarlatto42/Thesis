@@ -296,14 +296,24 @@ def main():
 
     print(f"[INFO] Base camera-to-world (OpenCV convention):\n{cam2world_cv_base}")
 
-    # Target point = object center in world coordinates
-    # Assume mesh is already centered at origin in world coords
-    target = np.array([0.0, 0.0, 0.0], dtype=np.float64)
-    print(f"\n[INFO] Target (object center): {target}")
+    # Target point = object center in world coordinates (mesh bounding box center)
+    target = mesh_trimesh.bounds.mean(axis=0).astype(np.float64)
+    print(f"\n[INFO] Target (mesh center): {target}")
 
-    # Compute base radius from GT camera center
-    radius_base = np.linalg.norm(C - target)
+    # Compute base radius and GT spherical angles from GT camera center
+    v = C - target
+    radius_base = np.linalg.norm(v)
     print(f"[INFO] Base radius (GT camera distance): {radius_base:.6f}")
+
+    # Compute GT spherical parameters using the same convention as the perturbation
+    # elevation (rx0): angle above horizontal plane (arcsin of normalized Y component)
+    rx0 = np.arcsin(v[1] / radius_base)
+    # azimuth (ry0): rotation around world +Y axis (atan2 of X/Z)
+    ry0 = np.arctan2(v[0], v[2])
+
+    print(f"[INFO] GT spherical angles:")
+    print(f"       rx0 (elevation) = {np.rad2deg(rx0):.4f} deg ({rx0:.6f} rad)")
+    print(f"       ry0 (azimuth)   = {np.rad2deg(ry0):.4f} deg ({ry0:.6f} rad)")
 
     # =========================================================================
     # Step 5: Compute perturbed camera position on sphere (look-at)
@@ -312,30 +322,36 @@ def main():
     print("Step 5: Compute perturbed camera position on sphere")
     print("=" * 60)
 
-    # Convert degrees to radians
-    rx_rad = np.deg2rad(args.rx_deg)  # elevation (pitch)
-    ry_rad = np.deg2rad(args.ry_deg)  # azimuth (around Y axis)
+    # Convert perturbation degrees to radians
+    drx_rad = np.deg2rad(args.rx_deg)  # delta elevation (pitch)
+    dry_rad = np.deg2rad(args.ry_deg)  # delta azimuth (around Y axis)
 
-    print(f"[INFO] Perturbation parameters:")
+    print(f"[INFO] Perturbation parameters (RELATIVE to GT):")
     print(f"       dz = {args.dz} (delta on radial distance)")
-    print(f"       rx_deg = {args.rx_deg} (elevation, {rx_rad:.6f} rad)")
-    print(f"       ry_deg = {args.ry_deg} (azimuth, {ry_rad:.6f} rad)")
+    print(f"       rx_deg = {args.rx_deg} (delta elevation, {drx_rad:.6f} rad)")
+    print(f"       ry_deg = {args.ry_deg} (delta azimuth, {dry_rad:.6f} rad)")
 
-    # Compute new radius
-    radius = max(1e-6, radius_base + args.dz)
-    print(f"\n[INFO] New radius: {radius:.6f}")
+    # Apply perturbations RELATIVE to GT spherical angles
+    rx = rx0 + drx_rad  # final elevation
+    ry = ry0 + dry_rad  # final azimuth
+    radius = max(1e-6, radius_base + args.dz)  # final radius
 
-    # Compute camera position on sphere
+    print(f"\n[INFO] Final spherical parameters:")
+    print(f"       rx (elevation) = {np.rad2deg(rx):.4f} deg ({rx:.6f} rad)")
+    print(f"       ry (azimuth)   = {np.rad2deg(ry):.4f} deg ({ry:.6f} rad)")
+    print(f"       radius = {radius:.6f}")
+
+    # Compute camera position on sphere using spherical coordinates
     # Convention:
     #   - ry (azimuth) rotates around world +Y axis
     #   - rx (elevation) tilts up/down from the horizontal plane
-    #   - At rx=0, ry=0: camera is at (0, 0, radius) looking at origin
     #   - Positive ry rotates camera position counterclockwise when viewed from above
     #   - Positive rx moves camera up (positive Y)
+    # NOTE: When dz=rx_deg=ry_deg=0, cam_pos == C (GT camera center)
     cam_pos = target + radius * np.array([
-        np.sin(ry_rad) * np.cos(rx_rad),  # X
-        np.sin(rx_rad),                    # Y
-        np.cos(ry_rad) * np.cos(rx_rad),  # Z
+        np.sin(ry) * np.cos(rx),  # X
+        np.sin(rx),                # Y
+        np.cos(ry) * np.cos(rx),  # Z
     ], dtype=np.float64)
 
     print(f"[INFO] New camera position: {cam_pos}")
