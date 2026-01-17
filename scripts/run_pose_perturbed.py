@@ -6,8 +6,16 @@ Single-frame pose perturbation test for a 3D object pose pipeline (NO optimizati
 
 Purpose:
     Starting from the ground-truth camera pose (from SPE3R world_mat_{idx}),
-    apply a user-specified delta pose (dz, rx, ry) to the camera pose,
-    render the silhouette of a NeuS mesh, and compute IoU vs the GT mask.
+    apply a user-specified perturbation (dz, rx_deg, ry_deg) using STI-Pose Option B
+    reduced pose parametrization:
+    
+    - ry_deg: azimuth angle (rotation around world Y axis)
+    - rx_deg: elevation angle (pitch up/down)
+    - dz: delta on radial distance (camera-object distance)
+    
+    The camera always looks at the target (object center at origin),
+    keeping the object on the optical axis (x=y=0 in camera coords).
+    
     This validates that pose composition works and that IoU is sensitive to pose changes.
 
 Usage:
@@ -18,7 +26,7 @@ Usage:
         --idx 0 \
         --dz 0.1 \
         --rx_deg 5.0 \
-        --ry_deg 0.0 \
+        --ry_deg 10.0 \
         --show
 
 """
@@ -82,31 +90,24 @@ def parse_args():
         help="If set, use EGL platform for headless rendering (set PYOPENGL_PLATFORM=egl).",
     )
     
-    # Perturbation parameters (camera-frame)
+    # Perturbation parameters (spherical coordinates around object)
     parser.add_argument(
         "--dz",
         type=float,
         default=0.0,
-        help="Translation along camera +Z axis (forward) in OpenCV camera coordinates.",
+        help="Delta on radial distance (camera-object distance): radius = radius_base + dz.",
     )
     parser.add_argument(
         "--rx_deg",
         type=float,
         default=0.0,
-        help="Rotation around camera X axis in degrees.",
+        help="Elevation angle in degrees (pitch up/down from horizontal plane).",
     )
     parser.add_argument(
         "--ry_deg",
         type=float,
         default=0.0,
-        help="Rotation around camera Y axis in degrees.",
-    )
-    parser.add_argument(
-        "--rot_order",
-        type=str,
-        choices=["rx_then_ry", "ry_then_rx"],
-        default="rx_then_ry",
-        help="Order of rotation application (default: rx_then_ry).",
+        help="Azimuth angle in degrees (rotation around world Y axis).",
     )
     
     # Rendering
@@ -151,26 +152,6 @@ def parse_args():
         parser.error("--out_dir is required when --save is set.")
     
     return args
-
-
-def rotation_matrix_x(angle_rad):
-    """Create a 3x3 rotation matrix around X axis."""
-    c, s = np.cos(angle_rad), np.sin(angle_rad)
-    return np.array([
-        [1, 0,  0],
-        [0, c, -s],
-        [0, s,  c],
-    ], dtype=np.float64)
-
-
-def rotation_matrix_y(angle_rad):
-    """Create a 3x3 rotation matrix around Y axis."""
-    c, s = np.cos(angle_rad), np.sin(angle_rad)
-    return np.array([
-        [ c, 0, s],
-        [ 0, 1, 0],
-        [-s, 0, c],
-    ], dtype=np.float64)
 
 
 def main():
@@ -296,13 +277,13 @@ def main():
     print(f"       Bounding box max: {mesh_trimesh.bounds[1]}")
 
     # =========================================================================
-    # Step 4: Build base camera-to-world matrix (OpenCV convention)
+    # Step 4: Compute base camera-to-world and base radius
     # =========================================================================
     print("\n" + "=" * 60)
-    print("Step 4: Build base camera-to-world matrix")
+    print("Step 4: Compute base camera-to-world and base radius")
     print("=" * 60)
 
-    # Construct camera-to-world matrix:
+    # Construct base camera-to-world matrix (for reference):
     # R_wc = R.T
     # t_wc = -R.T @ t
     R_wc = R.T
@@ -315,57 +296,107 @@ def main():
 
     print(f"[INFO] Base camera-to-world (OpenCV convention):\n{cam2world_cv_base}")
 
+    # Target point = object center in world coordinates
+    # Assume mesh is already centered at origin in world coords
+    target = np.array([0.0, 0.0, 0.0], dtype=np.float64)
+    print(f"\n[INFO] Target (object center): {target}")
+
+    # Compute base radius from GT camera center
+    radius_base = np.linalg.norm(C - target)
+    print(f"[INFO] Base radius (GT camera distance): {radius_base:.6f}")
+
     # =========================================================================
-    # Step 5: Build delta transform in camera frame
+    # Step 5: Compute perturbed camera position on sphere (look-at)
     # =========================================================================
     print("\n" + "=" * 60)
-    print("Step 5: Build delta transform in camera frame")
+    print("Step 5: Compute perturbed camera position on sphere")
     print("=" * 60)
 
     # Convert degrees to radians
-    rx_rad = np.deg2rad(args.rx_deg)
-    ry_rad = np.deg2rad(args.ry_deg)
+    rx_rad = np.deg2rad(args.rx_deg)  # elevation (pitch)
+    ry_rad = np.deg2rad(args.ry_deg)  # azimuth (around Y axis)
 
     print(f"[INFO] Perturbation parameters:")
-    print(f"       dz = {args.dz}")
-    print(f"       rx_deg = {args.rx_deg} ({rx_rad:.6f} rad)")
-    print(f"       ry_deg = {args.ry_deg} ({ry_rad:.6f} rad)")
-    print(f"       rot_order = {args.rot_order}")
+    print(f"       dz = {args.dz} (delta on radial distance)")
+    print(f"       rx_deg = {args.rx_deg} (elevation, {rx_rad:.6f} rad)")
+    print(f"       ry_deg = {args.ry_deg} (azimuth, {ry_rad:.6f} rad)")
 
-    # Define rotation matrices Rx(rx) and Ry(ry)
-    Rx = rotation_matrix_x(rx_rad)
-    Ry = rotation_matrix_y(ry_rad)
+    # Compute new radius
+    radius = max(1e-6, radius_base + args.dz)
+    print(f"\n[INFO] New radius: {radius:.6f}")
 
-    # Combine according to --rot_order
-    if args.rot_order == "rx_then_ry":
-        R_delta = Ry @ Rx  # Apply Rx first, then Ry
-    else:  # ry_then_rx
-        R_delta = Rx @ Ry  # Apply Ry first, then Rx
+    # Compute camera position on sphere
+    # Convention:
+    #   - ry (azimuth) rotates around world +Y axis
+    #   - rx (elevation) tilts up/down from the horizontal plane
+    #   - At rx=0, ry=0: camera is at (0, 0, radius) looking at origin
+    #   - Positive ry rotates camera position counterclockwise when viewed from above
+    #   - Positive rx moves camera up (positive Y)
+    cam_pos = target + radius * np.array([
+        np.sin(ry_rad) * np.cos(rx_rad),  # X
+        np.sin(rx_rad),                    # Y
+        np.cos(ry_rad) * np.cos(rx_rad),  # Z
+    ], dtype=np.float64)
 
-    # Translation vector is [0, 0, dz] in camera coordinates
-    t_delta = np.array([0.0, 0.0, args.dz], dtype=np.float64)
-
-    # Assemble Delta_cam_cv (4x4) that maps camera frame to camera frame
-    Delta_cam_cv = np.eye(4, dtype=np.float64)
-    Delta_cam_cv[:3, :3] = R_delta
-    Delta_cam_cv[:3, 3] = t_delta
-
-    print(f"\n[INFO] Delta rotation matrix:\n{R_delta}")
-    print(f"\n[INFO] Delta translation: {t_delta}")
-    print(f"\n[INFO] Delta_cam_cv:\n{Delta_cam_cv}")
+    print(f"[INFO] New camera position: {cam_pos}")
 
     # =========================================================================
-    # Step 6: Apply delta to camera pose
+    # Step 6: Compute look-at rotation (world->camera, OpenCV convention)
     # =========================================================================
     print("\n" + "=" * 60)
-    print("Step 6: Apply delta to camera pose")
+    print("Step 6: Compute look-at rotation")
     print("=" * 60)
 
-    # Because delta is expressed in the camera frame, update pose as:
-    # cam2world_cv = cam2world_cv_base @ Delta_cam_cv
-    cam2world_cv = cam2world_cv_base @ Delta_cam_cv
+    # Build camera axes for OpenCV convention (x right, y down, z forward)
+    # Forward axis (camera +Z) points from camera to target
+    forward = target - cam_pos
+    forward = forward / np.linalg.norm(forward)
 
-    print(f"[INFO] Perturbed camera-to-world (OpenCV convention):\n{cam2world_cv}")
+    # World up vector
+    world_up = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+
+    # Right axis (camera +X) = up x forward (normalized)
+    right = np.cross(world_up, forward)
+    right_norm = np.linalg.norm(right)
+    if right_norm < 1e-6:
+        # Camera is looking straight up or down, use fallback
+        print("[WARNING] Camera looking along Y axis, using fallback right vector.")
+        right = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+    else:
+        right = right / right_norm
+
+    # True up axis = forward x right
+    up = np.cross(forward, right)
+
+    # Build rotation matrix for world->camera (R_cw)
+    # OpenCV camera has +Y down, so we use -up for the Y row
+    # Rows of R are camera axes expressed in world coords:
+    #   row 0 = right (camera +X)
+    #   row 1 = -up (camera +Y points down)
+    #   row 2 = forward (camera +Z)
+    R_lookat = np.stack([right, -up, forward], axis=0)
+
+    print(f"[INFO] Forward (camera +Z): {forward}")
+    print(f"[INFO] Right (camera +X): {right}")
+    print(f"[INFO] Up (world up projected): {up}")
+    print(f"\n[INFO] Look-at rotation R (world->camera):\n{R_lookat}")
+
+    # Compute translation: t = -R @ cam_pos
+    t_lookat = -R_lookat @ cam_pos
+    print(f"[INFO] Translation t_lookat: {t_lookat}")
+
+    # Build camera-to-world matrix from (R_lookat, t_lookat)
+    # R_wc = R_lookat.T
+    # t_wc = -R_lookat.T @ t_lookat = cam_pos
+    R_wc_new = R_lookat.T
+    t_wc_new = -R_lookat.T @ t_lookat
+
+    # Assemble cam2world_cv
+    cam2world_cv = np.eye(4, dtype=np.float64)
+    cam2world_cv[:3, :3] = R_wc_new
+    cam2world_cv[:3, 3] = t_wc_new
+
+    print(f"\n[INFO] Perturbed camera-to-world (OpenCV convention):\n{cam2world_cv}")
 
     # =========================================================================
     # Step 7: Convert OpenCV → OpenGL camera axes
@@ -476,9 +507,11 @@ def main():
     print("-" * 60)
     print(f"  idx:          {args.idx}")
     print(f"  dz:           {args.dz}")
-    print(f"  rx_deg:       {args.rx_deg}")
-    print(f"  ry_deg:       {args.ry_deg}")
-    print(f"  rot_order:    {args.rot_order}")
+    print(f"  rx_deg:       {args.rx_deg} (elevation)")
+    print(f"  ry_deg:       {args.ry_deg} (azimuth)")
+    print(f"  radius_base:  {radius_base:.6f}")
+    print(f"  radius:       {radius:.6f}")
+    print(f"  cam_pos:      {cam_pos}")
     print(f"  IoU:          {iou:.6f}")
     print(f"  Intersection: {intersection}")
     print(f"  Union:        {union}")
@@ -518,8 +551,14 @@ def main():
             t=t,
             C=C,
             cam2world_cv_base=cam2world_cv_base,
-            Delta_cam_cv=Delta_cam_cv,
             cam2world_cv=cam2world_cv,
+            # Spherical look-at parameters
+            target=target,
+            radius_base=radius_base,
+            radius=radius,
+            cam_pos=cam_pos,
+            R_lookat=R_lookat,
+            t_lookat=t_lookat,
         )
         print(f"[INFO] Saved pose parameters: {pose_out_path}")
 
@@ -531,7 +570,8 @@ def main():
             "dz": float(args.dz),
             "rx_deg": float(args.rx_deg),
             "ry_deg": float(args.ry_deg),
-            "rot_order": args.rot_order,
+            "radius_base": float(radius_base),
+            "radius": float(radius),
         }
         metrics_out_path = out_dir / f"metrics_{args.idx:03d}.json"
         with open(metrics_out_path, "w") as f:
