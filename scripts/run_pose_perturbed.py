@@ -368,61 +368,67 @@ def main():
     print(f"[DEBUG] ||C - cam_pos|| = {np.linalg.norm(C - cam_pos):.6e}")
 
     # =========================================================================
-    # Step 6: Compute look-at rotation (world->camera, OpenCV convention)
+    # Step 6: Compute perturbed rotation (camera-frame perturbation on GT)
     # =========================================================================
     print("\n" + "=" * 60)
-    print("Step 6: Compute look-at rotation")
+    print("Step 6: Compute perturbed rotation")
     print("=" * 60)
 
-    # Build camera axes for OpenCV convention (x right, y down, z forward)
-    # Forward axis (camera +Z) points from camera to target
-    forward = target - cam_pos
-    forward = forward / np.linalg.norm(forward)
+    # Use GT rotation R as base (world->camera from decomposeProjectionMatrix)
+    R_base = R.copy()
 
-    # Use GT camera up vector so that with zero perturbations, R_lookat == R
-    # In OpenCV convention, camera +Y points down, so camera up is -R.T[:, 1]
-    up_hint = (-R.T[:, 1]).astype(np.float64)  # GT camera up (since +Y in OpenCV is down)
-    up_hint = up_hint / np.linalg.norm(up_hint)
+    # Build rotation matrices Rx(drx) and Ry(dry) for camera-frame perturbation
+    # These are small rotations applied in camera coordinates
+    def rotation_matrix_x(angle_rad):
+        """Rotation around X axis."""
+        c, s = np.cos(angle_rad), np.sin(angle_rad)
+        return np.array([
+            [1, 0,  0],
+            [0, c, -s],
+            [0, s,  c],
+        ], dtype=np.float64)
 
-    # Right axis (camera +X) = forward x up_hint (right-handed frame)
-    right = np.cross(forward, up_hint)
-    right_norm = np.linalg.norm(right)
-    if right_norm < 1e-6:
-        # Camera is looking straight up or down, use fallback
-        print("[WARNING] Camera looking along Y axis, using fallback right vector.")
-        right = np.array([1.0, 0.0, 0.0], dtype=np.float64)
-    else:
-        right = right / right_norm
+    def rotation_matrix_y(angle_rad):
+        """Rotation around Y axis."""
+        c, s = np.cos(angle_rad), np.sin(angle_rad)
+        return np.array([
+            [ c, 0, s],
+            [ 0, 1, 0],
+            [-s, 0, c],
+        ], dtype=np.float64)
 
-    # True up axis = right x forward (ensures right-handed orthonormal frame)
-    up = np.cross(right, forward)
-    up = up / np.linalg.norm(up)
+    Rx = rotation_matrix_x(drx_rad)
+    Ry = rotation_matrix_y(dry_rad)
 
-    # Build rotation matrix for world->camera (R_cw)
-    # OpenCV camera has +Y down, so we use -up for the Y row
-    # Rows of R are camera axes expressed in world coords:
-    #   row 0 = right (camera +X)
-    #   row 1 = -up (camera +Y points down)
-    #   row 2 = forward (camera +Z)
-    R_lookat = np.stack([right, -up, forward], axis=0)
+    # Combine rotations: rx_then_ry order -> R_delta = Ry @ Rx
+    # This applies Rx first, then Ry (in camera coordinates)
+    R_delta = Ry @ Rx
 
-    print(f"[INFO] Forward (camera +Z): {forward}")
-    print(f"[INFO] Right (camera +X): {right}")
-    print(f"[INFO] Up (computed): {up}")
-    print(f"[INFO] GT camera up (up_hint): {up_hint}")
-    print(f"\n[INFO] Look-at rotation R (world->camera):\n{R_lookat}")
-    print(f"[DEBUG] ||R - R_lookat||_F = {np.linalg.norm(R - R_lookat):.6e}")
-    print(f"[DEBUG] det(R_lookat) = {np.linalg.det(R_lookat):.6f}")
+    print(f"[INFO] R_delta (camera-frame rotation):\n{R_delta}")
+    print(f"[DEBUG] det(R_delta) = {np.linalg.det(R_delta):.6f}")
 
-    # Compute translation: t = -R @ cam_pos
-    t_lookat = -R_lookat @ cam_pos
-    print(f"[INFO] Translation t_lookat: {t_lookat}")
+    # Apply perturbation in camera frame: R_new = R_delta @ R_base
+    # Pre-multiply to apply rotation in camera coordinates
+    R_new = R_delta @ R_base
 
-    # Build camera-to-world matrix from (R_lookat, t_lookat)
-    # R_wc = R_lookat.T
-    # t_wc = -R_lookat.T @ t_lookat = cam_pos
-    R_wc_new = R_lookat.T
-    t_wc_new = -R_lookat.T @ t_lookat
+    print(f"\n[INFO] R_base (GT world->camera):\n{R_base}")
+    print(f"\n[INFO] R_new (perturbed world->camera):\n{R_new}")
+    print(f"[DEBUG] ||R - R_new||_F = {np.linalg.norm(R - R_new):.6e}")
+    print(f"[DEBUG] det(R_new) = {np.linalg.det(R_new):.6f}")
+
+    # Use cam_pos from spherical step as the new camera center
+    C_new = cam_pos
+
+    # Compute translation: t_new = -R_new @ C_new
+    t_new = -R_new @ C_new
+    print(f"\n[INFO] C_new (camera center): {C_new}")
+    print(f"[INFO] t_new (translation): {t_new}")
+
+    # Build camera-to-world matrix from (R_new, t_new)
+    # R_wc = R_new.T
+    # t_wc = -R_new.T @ t_new = C_new
+    R_wc_new = R_new.T
+    t_wc_new = -R_new.T @ t_new
 
     # Assemble cam2world_cv
     cam2world_cv = np.eye(4, dtype=np.float64)
@@ -585,13 +591,14 @@ def main():
             C=C,
             cam2world_cv_base=cam2world_cv_base,
             cam2world_cv=cam2world_cv,
-            # Spherical look-at parameters
+            # Spherical + camera-frame perturbation parameters
             target=target,
             radius_base=radius_base,
             radius=radius,
             cam_pos=cam_pos,
-            R_lookat=R_lookat,
-            t_lookat=t_lookat,
+            R_new=R_new,
+            t_new=t_new,
+            R_delta=R_delta,
         )
         print(f"[INFO] Saved pose parameters: {pose_out_path}")
 
