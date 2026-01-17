@@ -1,50 +1,46 @@
-# Ignore macOS metadata
+# macOS
 .DS_Store
+**/.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
 
 # Virtual environments
 .venv/
 venv/
 env/
 
-# Dataset directories and large outputs
-NeuS
-SPE3R
-dataset_manipulation/verification_data
-hst_neus*/
-
-
-# Images, masks, archives and binary data
-*.png
-*.jpg
-*.jpeg
-*.exr
-*.hdr
-*.zip
-*.tar.gz
-*.tar
-*.tgz
-*.npz
-
-# 3D models / large meshes
-*.obj
-*.ply
-*.stl
-
-# Python cache
-__pycache__/
-*.pyc
-*.pyo
-
-# IDE/editors
+# IDE / editors
 .vscode/
 .idea/
 
 # Jupyter
 .ipynb_checkpoints/
 
-# Keep source code files
-!*.py
-!README.md
+# Large binary data (default ignored)
+*.png
+*.jpg
+*.jpeg
+*.exr
+*.hdr
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.npz
 
-# If you want to keep specific dataset files, add exceptions below, e.g.:
-# !NeuS/important_file.npy
+# 3D models / meshes
+*.obj
+*.ply
+*.stl
+
+# Experiment outputs
+outputs/
+runs/
+logs/
+
+# Allow figures for thesis / paper
+!figures/
+!figures/**/*.png
