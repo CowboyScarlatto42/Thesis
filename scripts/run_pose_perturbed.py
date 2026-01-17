@@ -379,8 +379,10 @@ def main():
     forward = target - cam_pos
     forward = forward / np.linalg.norm(forward)
 
-    # World up vector
-    world_up = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+    # Use GT camera up vector so that with zero perturbations, R_lookat == R
+    # In OpenCV convention, camera +Y points down, so camera up is -R.T[:, 1]
+    world_up = (-R.T[:, 1]).astype(np.float64)  # GT camera up (since +Y in OpenCV is down)
+    world_up = world_up / np.linalg.norm(world_up)
 
     # Right axis (camera +X) = up x forward (normalized)
     right = np.cross(world_up, forward)
@@ -406,7 +408,10 @@ def main():
     print(f"[INFO] Forward (camera +Z): {forward}")
     print(f"[INFO] Right (camera +X): {right}")
     print(f"[INFO] Up (world up projected): {up}")
+    print(f"[INFO] GT camera up (world_up): {world_up}")
     print(f"\n[INFO] Look-at rotation R (world->camera):\n{R_lookat}")
+    print(f"[DEBUG] ||R - R_lookat||_F = {np.linalg.norm(R - R_lookat):.6e}")
+    print(f"[DEBUG] det(R_lookat) = {np.linalg.det(R_lookat):.6f}")
 
     # Compute translation: t = -R @ cam_pos
     t_lookat = -R_lookat @ cam_pos
