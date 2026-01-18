@@ -1,0 +1,3 @@
+[submodule "external/sti_pose"]
+	path = external/sti_pose
+	url = https://github.com/meimeimei1223/STI-Pose.git
