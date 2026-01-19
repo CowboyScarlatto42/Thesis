@@ -1,361 +1,138 @@
 #!/usr/bin/env python3
 """
-runner_sti_pose_vanilla.py
+Minimal STI-Pose runner (single frame) with:
+- automatic z_near / z_far from mesh bbox diagonal
+- pose correction using STI-Pose internal recentering deltaP
 
-Vanilla STI-Pose baseline
-
-Runs STI-Pose exactly as implemented in the official repository,
-adapted to the SPE3R + NeuS setup, without modifying the STI-Pose submodule.
-
-Usage:
-    python scripts/runner_sti_pose_vanilla.py \
-        --mesh /path/to/mesh.ply \
-        --cameras_npz /path/to/cameras_spe3r.npz \
-        --mask /path/to/mask.png \
-        --idx 0 \
-        --width 256 \
-        --height 256 \
-        --iters 100 \
-        --particles 20 \
-        --th 0.02 \
-        --save_output \
-        --out /path/to/output
+Outputs:
+  <out>/pose_T_C_O.txt   (4x4, object-in-camera for the ORIGINAL mesh coords)
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
-import open3d as o3d
+import trimesh
 
-# Import STI-Pose from external submodule
 sys.path.append("external/sti_pose")
 from SilhouettePE import Process
 
 
 def parse_args():
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Vanilla STI-Pose baseline for SPE3R + NeuS setup."
-    )
-    parser.add_argument(
-        "--mesh",
-        type=str,
-        required=True,
-        help="Path to NeuS .ply mesh file.",
-    )
-    parser.add_argument(
-        "--cameras_npz",
-        type=str,
-        required=True,
-        help="Path to cameras_spe3r.npz file.",
-    )
-    parser.add_argument(
-        "--mask",
-        type=str,
-        required=True,
-        help="Path to GT silhouette mask (PNG).",
-    )
-    parser.add_argument(
-        "--idx",
-        type=int,
-        required=True,
-        help="Frame index (integer) selecting world_mat_{idx}.",
-    )
-    parser.add_argument(
-        "--width",
-        type=int,
-        default=256,
-        help="Image width (default: 256).",
-    )
-    parser.add_argument(
-        "--height",
-        type=int,
-        default=256,
-        help="Image height (default: 256).",
-    )
-    parser.add_argument(
-        "--iters",
-        type=int,
-        default=100,
-        help="PSO iterations (default: 100).",
-    )
-    parser.add_argument(
-        "--particles",
-        type=int,
-        default=20,
-        help="PSO particle count (default: 20).",
-    )
-    parser.add_argument(
-        "--th",
-        type=float,
-        default=0.02,
-        help="STI-Pose termination threshold (default: 0.02).",
-    )
-    parser.add_argument(
-        "--save_output",
-        action="store_true",
-        help="If set, save outputs to disk.",
-    )
-    parser.add_argument(
-        "--out",
-        type=str,
-        default="output",
-        help="Output directory (used only if --save_output is set).",
-    )
-    return parser.parse_args()
+    p = argparse.ArgumentParser(description="Minimal STI-Pose runner (single frame).")
+    p.add_argument("--mesh", type=str, required=True, help="Mesh path (.ply with normals).")
+    p.add_argument("--cameras_npz", type=str, required=True, help="cameras_spe3r.npz")
+    p.add_argument("--mask", type=str, required=True, help="GT mask PNG for this frame.")
+    p.add_argument("--idx", type=int, required=True, help="Frame index for world_mat_{idx}.")
+    p.add_argument("--width", type=int, default=256)
+    p.add_argument("--height", type=int, default=256)
+    p.add_argument("--iters", type=int, default=100)
+    p.add_argument("--particles", type=int, default=20)
+    p.add_argument("--th", type=float, default=0.02)
+    p.add_argument("--out", type=str, required=True, help="Output dir.")
+    return p.parse_args()
 
 
-def load_camera(cameras_npz: str, idx: int) -> tuple:
-    """
-    Load camera intrinsics and extrinsics from SPE3R cameras_npz file.
-
-    Args:
-        cameras_npz: Path to cameras_spe3r.npz file.
-        idx: Frame index.
-
-    Returns:
-        (K, R, t): K is 3x3 normalized intrinsic matrix,
-                   R is 3x3 rotation matrix (world->camera),
-                   t is 3x1 translation vector (world->camera).
-    """
-    cameras_path = Path(cameras_npz)
-    if not cameras_path.exists():
-        print(f"[ERROR] Cameras file not found: {cameras_path}")
-        sys.exit(1)
-
-    cameras_data = np.load(str(cameras_path))
-    world_mat_key = f"world_mat_{idx}"
-
-    if world_mat_key not in cameras_data:
-        available_keys = [k for k in cameras_data.keys() if k.startswith("world_mat_")]
-        print(f"[ERROR] Key '{world_mat_key}' not found in cameras file.")
-        print(f"        Available world_mat keys: {available_keys[:10]}...")
-        sys.exit(1)
-
-    world_mat = cameras_data[world_mat_key]
-
-    # Extract projection matrix P = world_mat[:3, :4]
-    P = world_mat[:3, :4].astype(np.float64)
-
-    # Decompose using cv2.decomposeProjectionMatrix
-    K, R, T_homog, _, _, _, _ = cv2.decomposeProjectionMatrix(P)
-
-    # Normalize intrinsics so that K[2,2] = 1
+def load_intrinsics_K(cameras_npz: str, idx: int) -> np.ndarray:
+    data = np.load(cameras_npz)
+    key = f"world_mat_{idx}"
+    if key not in data:
+        keys = [k for k in data.keys() if k.startswith("world_mat_")]
+        raise KeyError(f"Key '{key}' not found. Example keys: {keys[:5]}")
+    P = data[key][:3, :4].astype(np.float64)
+    K, _, _, _, _, _, _ = cv2.decomposeProjectionMatrix(P)
     K = K / K[2, 2]
-
-    # Compute camera center C in world coordinates (from homogeneous T)
-    C = T_homog[:3, 0] / T_homog[3, 0]
-
-    # Compute translation t = -R @ C so that X_cam = R @ X_world + t
-    t = -R @ C
-
-    return K, R, t
+    return K
 
 
 def load_mask(mask_path: str, width: int, height: int) -> np.ndarray:
-    """
-    Load and preprocess GT silhouette mask.
-
-    Args:
-        mask_path: Path to mask PNG file.
-        width: Target width.
-        height: Target height.
-
-    Returns:
-        Binary mask as uint8 {0, 255}.
-    """
-    mask_file = Path(mask_path)
-    if not mask_file.exists():
-        print(f"[ERROR] Mask file not found: {mask_file}")
-        sys.exit(1)
-
-    mask = cv2.imread(str(mask_file), cv2.IMREAD_GRAYSCALE)
-    if mask is None:
-        print(f"[ERROR] Failed to load mask: {mask_file}")
-        sys.exit(1)
-
-    # Resize if necessary
-    if mask.shape[0] != height or mask.shape[1] != width:
-        mask = cv2.resize(mask, (width, height), interpolation=cv2.INTER_NEAREST)
-
-    # Convert to binary uint8 {0, 255}
-    mask = ((mask > 127).astype(np.uint8)) * 255
-
-    return mask
+    m = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+    if m is None:
+        raise FileNotFoundError(f"Failed to load mask: {mask_path}")
+    if m.shape[0] != height or m.shape[1] != width:
+        m = cv2.resize(m, (width, height), interpolation=cv2.INTER_NEAREST)
+    return ((m > 127).astype(np.uint8)) * 255
 
 
-def compute_depth_range(mesh_path: str) -> tuple:
-    """
-    Compute depth search range from mesh bounding box diagonal.
-
-    Args:
-        mesh_path: Path to .ply mesh file.
-
-    Returns:
-        (z_near, z_far, diagonal): Depth range and bounding box diagonal.
-    """
-    mesh_file = Path(mesh_path)
-    if not mesh_file.exists():
-        print(f"[ERROR] Mesh file not found: {mesh_file}")
-        sys.exit(1)
-
-    mesh = o3d.io.read_triangle_mesh(str(mesh_file))
-    if mesh.is_empty():
-        print(f"[ERROR] Failed to load mesh or mesh is empty: {mesh_file}")
-        sys.exit(1)
-
-    # Compute axis-aligned bounding box diagonal
-    aabb = mesh.get_axis_aligned_bounding_box()
-    extent = aabb.get_extent()
-    diagonal = np.linalg.norm(extent)
-
-    # Set depth search range
+def compute_z_range_from_mesh(mesh_path: str) -> tuple[float, float, float]:
+    """Returns (z_near, z_far, diagonal) using axis-aligned bbox diagonal."""
+    mesh = trimesh.load(mesh_path, force="mesh", process=False)
+    if not hasattr(mesh, "bounds") or mesh.bounds is None:
+        raise RuntimeError(f"Could not read bounds for mesh: {mesh_path}")
+    bounds = mesh.bounds  # shape (2,3): min, max
+    extent = bounds[1] - bounds[0]
+    diagonal = float(np.linalg.norm(extent))
     z_near = 1.5 * diagonal
     z_far = 10.0 * diagonal
-
     return z_near, z_far, diagonal
 
 
 def main():
     args = parse_args()
 
-    # =========================================================================
-    # Step 1: Load camera intrinsics and extrinsics
-    # =========================================================================
-    print("\n" + "=" * 60)
-    print("Step 1: Load camera intrinsics and extrinsics")
-    print("=" * 60)
+    mesh_path = str(Path(args.mesh))
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    K, R, t = load_camera(args.cameras_npz, args.idx)
-    print(f"[INFO] Intrinsics K (normalized):\n{K}")
-    print(f"\n[INFO] Rotation R (world->camera):\n{R}")
-    print(f"\n[INFO] Translation t (world->camera): {t.flatten()}")
-
-    # =========================================================================
-    # Step 2: Load GT mask
-    # =========================================================================
-    print("\n" + "=" * 60)
-    print("Step 2: Load GT mask")
-    print("=" * 60)
-
+    # Intrinsics + mask
+    K = load_intrinsics_K(args.cameras_npz, args.idx)
     mask = load_mask(args.mask, args.width, args.height)
-    print(f"[INFO] Loaded mask: {args.mask}")
-    print(f"       Shape: {mask.shape}, Non-zero pixels: {np.sum(mask > 0)}")
 
-    # =========================================================================
-    # Step 3: Compute depth search range
-    # =========================================================================
-    print("\n" + "=" * 60)
-    print("Step 3: Compute depth search range")
-    print("=" * 60)
+    # z-range from mesh
+    z_near, z_far, diag = compute_z_range_from_mesh(mesh_path)
+    print(f"[INFO] bbox diagonal: {diag:.6f}  -> z_near={z_near:.6f}, z_far={z_far:.6f}")
 
-    z_near, z_far, diagonal = compute_depth_range(args.mesh)
-    print(f"[INFO] Mesh bounding box diagonal: {diagonal:.6f}")
-    print(f"[INFO] z_near: {z_near:.6f}")
-    print(f"[INFO] z_far: {z_far:.6f}")
+    # STI-Pose
+    proc = Process((args.width, args.height), K, 1)
+    proc.set_model(mesh_path)
 
-    # =========================================================================
-    # Step 4: Setup STI-Pose
-    # =========================================================================
-    print("\n" + "=" * 60)
-    print("Step 4: Setup STI-Pose")
-    print("=" * 60)
+    # IMPORTANT: STI-Pose internal recenter (mean of vertices) stored as renderer.deltaP
+    try:
+        deltaP = np.array(proc.renderer.deltaP, dtype=np.float64).reshape(3,)
+    except Exception as e:
+        raise RuntimeError(
+            "Could not access proc.renderer.deltaP. "
+            "This runner is intentionally written without fallback."
+        ) from e
 
-    img_size = (args.width, args.height)
-    p = Process(img_size, K, 1)
-    p.set_model(args.mesh)
-    p.set_ref(mask)
-    print(f"[INFO] STI-Pose initialized with image size: {img_size}")
-    print(f"[INFO] Model set: {args.mesh}")
+    proc.set_ref(mask)
 
-    # =========================================================================
-    # Step 5: Run pose estimation
-    # =========================================================================
-    print("\n" + "=" * 60)
-    print("Step 5: Run pose estimation (vanilla STI-Pose)")
-    print("=" * 60)
+    # Pose estimation (returns pose for the internally-centered mesh)
+    T_centered, pose_internal = proc.pose_es(z_near, z_far, args.iters, args.particles, args.th)
 
-    print(f"[INFO] Running PSO with iters={args.iters}, particles={args.particles}, th={args.th}")
+    # Correct translation back to ORIGINAL mesh coordinates:
+    # If STI-Pose centered mesh by: X' = X - c
+    # Then: (R X' + t_centered) = (R (X - c) + t_centered) = (R X + (t_centered - R c))
+    R = T_centered[:3, :3]
+    t_centered = T_centered[:3, 3]
+    t_orig = t_centered - R @ deltaP
 
-    pose_pred, pose_internal = p.pose_es(
-        z_near,
-        z_far,
-        args.iters,
-        args.particles,
-        args.th
-    )
+    T_C_O = np.eye(4, dtype=np.float64)
+    T_C_O[:3, :3] = R
+    T_C_O[:3, 3] = t_orig
 
-    # pose_pred is T_C_O (object in camera frame)
-    T_C_O = pose_pred
+    # Save corrected pose
+    np.savetxt(out_dir / "pose_T_C_O.txt", T_C_O, fmt="%.10f")
+    print(f"[INFO] Saved: {out_dir / 'pose_T_C_O.txt'}")
 
-    # Build T_C_W (camera <- world) from R, t
-    T_C_W = np.eye(4)
-    T_C_W[:3, :3] = R
-    T_C_W[:3, 3] = t.reshape(3,)
-
-    # Invert to get T_W_C (world <- camera)
-    T_W_C = np.linalg.inv(T_C_W)
-
-    # Compute object in world frame: T_W_O = T_W_C @ T_C_O
-    T_W_O = T_W_C @ T_C_O
-
-    print("\n[INFO] T_C_O (object in camera frame):")
-    print(T_C_O)
-    print("\n[INFO] T_W_O (object in world frame):")
-    print(T_W_O)
-
-    # =========================================================================
-    # Step 6: Final render
-    # =========================================================================
-    print("\n" + "=" * 60)
-    print("Step 6: Final render")
-    print("=" * 60)
-
-    rendered = p.render_silhouette(pose_internal)
-    print(f"[INFO] Rendered silhouette shape: {rendered.shape}")
-
-    # =========================================================================
-    # Step 7: Output handling (conditional)
-    # =========================================================================
-    if args.save_output:
-        print("\n" + "=" * 60)
-        print("Step 7: Save outputs")
-        print("=" * 60)
-
-        out_dir = Path(args.out)
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-        # Save rendered silhouette
-        rendered_path = out_dir / "rendered.png"
-        cv2.imwrite(str(rendered_path), rendered)
-        print(f"[INFO] Saved rendered silhouette: {rendered_path}")
-
-        # Save T_C_O (object in camera frame)
-        pose_T_C_O_path = out_dir / "pose_T_C_O.txt"
-        np.savetxt(str(pose_T_C_O_path), T_C_O, fmt="%.10f")
-        print(f"[INFO] Saved T_C_O (object in camera): {pose_T_C_O_path}")
-
-        # Save T_W_O (object in world frame)
-        pose_T_W_O_path = out_dir / "pose_T_W_O.txt"
-        np.savetxt(str(pose_T_W_O_path), T_W_O, fmt="%.10f")
-        print(f"[INFO] Saved T_W_O (object in world): {pose_T_W_O_path}")
-
-        # Save parameters
-        params_path = out_dir / "params.txt"
-        with open(params_path, "w") as f:
-            f.write(f"z_near: {z_near}\n")
-            f.write(f"z_far: {z_far}\n")
-            f.write(f"iters: {args.iters}\n")
-            f.write(f"particles: {args.particles}\n")
-            f.write(f"threshold: {args.th}\n")
-        print(f"[INFO] Saved parameters: {params_path}")
-
-    print("\n" + "=" * 60)
-    print("Done.")
-    print("=" * 60)
+    # Save raw pose_internal (robust: numpy array or JSON)
+    if isinstance(pose_internal, np.ndarray):
+        np.savetxt(out_dir / "pose_internal.txt", pose_internal, fmt="%.10f")
+        print(f"[INFO] Saved: {out_dir / 'pose_internal.txt'}")
+    else:
+        try:
+            arr = np.array(pose_internal, dtype=np.float64)
+            np.savetxt(out_dir / "pose_internal.txt", arr, fmt="%.10f")
+            print(f"[INFO] Saved: {out_dir / 'pose_internal.txt'}")
+        except (ValueError, TypeError):
+            with open(out_dir / "pose_internal.json", "w") as f:
+                json.dump(pose_internal, f, indent=2)
+            with open(out_dir / "pose_internal.txt", "w") as f:
+                f.write("# See pose_internal.json\n")
+            print(f"[INFO] Saved: {out_dir / 'pose_internal.json'} (with pose_internal.txt pointer)")
 
 
 if __name__ == "__main__":
