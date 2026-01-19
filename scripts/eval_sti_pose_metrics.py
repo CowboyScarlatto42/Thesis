@@ -29,6 +29,7 @@ def parse_args():
     parser.add_argument("--width", type=int, default=256)
     parser.add_argument("--height", type=int, default=256)
     parser.add_argument("--n_points", type=int, default=10000)
+    parser.add_argument("--mask_cad", type=str, default=None, help="CAD mask for GT sanity check.")
     parser.add_argument("--out", type=str, default=None)
     return parser.parse_args()
 
@@ -168,24 +169,31 @@ def main():
     pass_add_neus = add_neus < thr_neus
     pass_adds_neus = adds_neus < thr_neus
 
-    # Render silhouettes using NeuS mesh
-    p = Process((args.width, args.height), K, 1)
-    p.set_model(args.mesh_neus)
+    # Render predicted silhouette using NeuS mesh
+    p_neus = Process((args.width, args.height), K, 1)
+    p_neus.set_model(args.mesh_neus)
 
-    # GT silhouette (sanity check)
-    rendered_gt = p.render_silhouette(T_gt)
-    iou_gt = compute_iou(rendered_gt, gt_mask)
-
-    # Predicted silhouette
     if args.pred_pose_internal:
         pose_internal = load_pose_internal(args.pred_pose_internal)
-        rendered = p.render_silhouette(pose_internal)
+        rendered_pred = p_neus.render_silhouette(pose_internal)
     else:
         print("[WARNING] No --pred_pose_internal provided; using T_pred for rendering (may be inconsistent).")
-        rendered = p.render_silhouette(T_pred)
+        rendered_pred = p_neus.render_silhouette(T_pred)
 
-    # IoU (NeuS mesh only)
-    iou_pred = compute_iou(rendered, gt_mask)
+    iou_pred_neus = compute_iou(rendered_pred, gt_mask)
+
+    # Sanity check: render GT pose with CAD mesh vs CAD mask (optional)
+    iou_gt_cad = None
+    rendered_gt_cad = None
+    mask_cad = None
+    if args.mask_cad:
+        mask_cad = load_mask(args.mask_cad, args.width, args.height)
+        p_cad = Process((args.width, args.height), K, 1)
+        p_cad.set_model(args.mesh_cad)
+        rendered_gt_cad = p_cad.render_silhouette(T_gt)
+        iou_gt_cad = compute_iou(rendered_gt_cad, mask_cad)
+    else:
+        print("[INFO] No --mask_cad provided; skipping GT sanity check.")
 
     # Print metrics
     print("# CAD-based (includes reconstruction error)")
@@ -194,22 +202,23 @@ def main():
     print("# NeuS-based (pose error only)")
     print(f"ADD_NeuS={add_neus:.6f}, ADD-S_NeuS={adds_neus:.6f}, "
           f"thr_NeuS={thr_neus:.6f}, pass_add_NeuS={pass_add_neus}, pass_adds_NeuS={pass_adds_neus}")
-    print(f"IoU_gt={iou_gt:.4f}, IoU_pred={iou_pred:.4f}")
+    iou_gt_str = f"{iou_gt_cad:.4f}" if iou_gt_cad is not None else "SKIPPED"
+    print(f"IoU_pred_neus={iou_pred_neus:.4f}, IoU_gt_cad={iou_gt_str}")
 
-    # Create overlay
-    overlay = create_overlay(rendered, gt_mask)
+    # Create overlay (predicted vs GT mask)
+    overlay_pred = create_overlay(rendered_pred, gt_mask)
 
-    # Display images
+    # Display images (predicted vs GT mask)
     fig, axes = plt.subplots(1, 3, figsize=(12, 4))
     fig.suptitle("Hubble Space Telescope (HST)", fontsize=14)
     axes[0].imshow(gt_mask, cmap="gray")
     axes[0].set_title("GT Mask")
     axes[0].axis("off")
-    axes[1].imshow(rendered, cmap="gray")
+    axes[1].imshow(rendered_pred, cmap="gray")
     axes[1].set_title("Rendered Silhouette (NeuS)")
     axes[1].axis("off")
-    axes[2].imshow(overlay)
-    axes[2].set_title("Overlay")
+    axes[2].imshow(overlay_pred)
+    axes[2].set_title("Overlay (Pred vs GT)")
     axes[2].axis("off")
     legend_patches = [
         mpatches.Patch(color="red", label="GT only"),
@@ -220,11 +229,32 @@ def main():
     plt.tight_layout()
     plt.show()
 
+    # Display sanity check figure if computed
+    if iou_gt_cad is not None:
+        overlay_sanity = create_overlay(rendered_gt_cad, mask_cad)
+        fig2, axes2 = plt.subplots(1, 3, figsize=(12, 4))
+        fig2.suptitle("Sanity Check: CAD GT Pose vs CAD Mask", fontsize=14)
+        axes2[0].imshow(mask_cad, cmap="gray")
+        axes2[0].set_title("CAD Mask")
+        axes2[0].axis("off")
+        axes2[1].imshow(rendered_gt_cad, cmap="gray")
+        axes2[1].set_title("Rendered GT (CAD)")
+        axes2[1].axis("off")
+        axes2[2].imshow(overlay_sanity)
+        axes2[2].set_title("Overlay (Sanity)")
+        axes2[2].axis("off")
+        axes2[2].legend(handles=legend_patches, loc="lower left", framealpha=0.9)
+        plt.tight_layout()
+        plt.show()
+
     # Save outputs if --out provided
     if args.out:
         out_dir = Path(args.out)
         out_dir.mkdir(parents=True, exist_ok=True)
-        cv2.imwrite(str(out_dir / "overlay.png"), overlay[:, :, ::-1])
+        cv2.imwrite(str(out_dir / "overlay_pred.png"), overlay_pred[:, :, ::-1])
+        if iou_gt_cad is not None:
+            overlay_sanity = create_overlay(rendered_gt_cad, mask_cad)
+            cv2.imwrite(str(out_dir / "overlay_sanity.png"), overlay_sanity[:, :, ::-1])
         with open(out_dir / "metrics.txt", "w") as f:
             f.write("# CAD-based (includes reconstruction error)\n")
             f.write(f"ADD_CAD={add_cad:.6f}\n")
@@ -240,8 +270,11 @@ def main():
             f.write(f"threshold_NeuS={thr_neus:.6f}\n")
             f.write(f"pass_add_NeuS={pass_add_neus}\n")
             f.write(f"pass_adds_NeuS={pass_adds_neus}\n")
-            f.write(f"\nIoU_gt={iou_gt:.4f}\n")
-            f.write(f"IoU_pred={iou_pred:.4f}\n")
+            f.write(f"\nIoU_pred_neus={iou_pred_neus:.4f}\n")
+            if iou_gt_cad is not None:
+                f.write(f"IoU_gt_cad={iou_gt_cad:.4f}\n")
+            else:
+                f.write("IoU_gt_cad=SKIPPED\n")
 
 
 if __name__ == "__main__":
