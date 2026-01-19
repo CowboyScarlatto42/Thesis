@@ -188,9 +188,15 @@ def main():
     mask_cad = None
     if args.mask_cad:
         mask_cad = load_mask(args.mask_cad, args.width, args.height)
+        # Compute CAD mesh center for STI-Pose recentering correction
+        cad_mesh = trimesh.load(args.mesh_cad, force="mesh")
+        cad_center = cad_mesh.bounding_box.centroid
+        # Build T_gt_centered: account for STI-Pose internal recentering
+        T_gt_centered = T_gt.copy()
+        T_gt_centered[:3, 3] = T_gt[:3, 3] + T_gt[:3, :3] @ cad_center
         p_cad = Process((args.width, args.height), K, 1)
         p_cad.set_model(args.mesh_cad)
-        rendered_gt_cad = p_cad.render_silhouette(T_gt)
+        rendered_gt_cad = p_cad.render_silhouette(T_gt_centered)
         iou_gt_cad = compute_iou(rendered_gt_cad, mask_cad)
     else:
         print("[INFO] No --mask_cad provided; skipping GT sanity check.")
