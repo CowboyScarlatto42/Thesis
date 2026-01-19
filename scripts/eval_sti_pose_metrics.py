@@ -142,6 +142,37 @@ def load_pose_internal(path: str) -> np.ndarray:
     return arr
 
 
+def get_sti_model_center(proc, mesh_path: str = None) -> np.ndarray:
+    """Get the internal mesh center/shift used by STI-Pose Process after set_model()."""
+    attr_names = ["deltaP", "delta_p", "DeltaP", "center", "model_center", 
+                  "mesh_center", "mean", "shift", "offset"]
+    nested_objs = [proc]
+    for nested_name in ["model", "renderer", "obj", "mesh"]:
+        if hasattr(proc, nested_name):
+            nested_objs.append(getattr(proc, nested_name))
+    
+    for obj in nested_objs:
+        if obj is None:
+            continue
+        for attr in attr_names:
+            if hasattr(obj, attr):
+                val = getattr(obj, attr)
+                if val is not None:
+                    try:
+                        c = np.asarray(val, dtype=np.float64).reshape(3,)
+                        return c
+                    except (ValueError, TypeError):
+                        continue
+    
+    # Fallback to trimesh vertices mean
+    if mesh_path:
+        print("[WARNING] Could not find STI-Pose internal center; using trimesh vertices mean.")
+        mesh = trimesh.load(mesh_path, force="mesh")
+        return np.asarray(mesh.vertices.mean(axis=0), dtype=np.float64)
+    
+    raise RuntimeError("Could not determine STI-Pose model center.")
+
+
 
 def main():
     args = parse_args()
@@ -188,14 +219,15 @@ def main():
     mask_cad = None
     if args.mask_cad:
         mask_cad = load_mask(args.mask_cad, args.width, args.height)
-        # Compute CAD mesh center for STI-Pose recentering correction
-        cad_mesh = trimesh.load(args.mesh_cad, force="mesh")
-        cad_center = cad_mesh.bounding_box.centroid
+        # Initialize STI-Pose with CAD mesh
+        p_cad = Process((args.width, args.height), K, 1)
+        p_cad.set_model(args.mesh_cad)
+        # Get internal center used by STI-Pose for recentering
+        cad_center = get_sti_model_center(p_cad, args.mesh_cad)
+        print(f"[INFO] STI center used (CAD): {cad_center}, ||c||={np.linalg.norm(cad_center):.6f}")
         # Build T_gt_centered: account for STI-Pose internal recentering
         T_gt_centered = T_gt.copy()
         T_gt_centered[:3, 3] = T_gt[:3, 3] + T_gt[:3, :3] @ cad_center
-        p_cad = Process((args.width, args.height), K, 1)
-        p_cad.set_model(args.mesh_cad)
         rendered_gt_cad = p_cad.render_silhouette(T_gt_centered)
         iou_gt_cad = compute_iou(rendered_gt_cad, mask_cad)
     else:
