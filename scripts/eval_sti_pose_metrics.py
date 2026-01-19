@@ -106,13 +106,33 @@ def create_overlay(rendered: np.ndarray, gt_mask: np.ndarray) -> np.ndarray:
     return overlay
 
 
-def load_pose_internal(path: str):
-    """Load pose_internal from text or JSON file."""
-    with open(path, "r") as f:
-        content = f.read().strip()
-    if content.startswith("["):
-        return json.loads(content)
-    return np.loadtxt(path).tolist()
+def load_pose_internal(path: str) -> np.ndarray:
+    """Load pose_internal as a 4x4 float64 numpy array."""
+    p = Path(path)
+    if not p.exists():
+        sys.exit(f"pose_internal not found: {p}")
+
+    # Try numeric text first (np.savetxt style)
+    try:
+        arr = np.loadtxt(str(p), dtype=np.float64)
+        arr = np.asarray(arr, dtype=np.float64)
+    except Exception:
+        # Fallback to JSON list
+        with open(p, "r") as f:
+            arr = json.load(f)
+        arr = np.asarray(arr, dtype=np.float64)
+
+    # Accept 3x4 or 4x4; promote 3x4 -> 4x4
+    if arr.shape == (3, 4):
+        arr4 = np.eye(4, dtype=np.float64)
+        arr4[:3, :4] = arr
+        arr = arr4
+
+    if arr.shape != (4, 4):
+        raise ValueError(f"pose_internal must be 4x4 (or 3x4). Got shape {arr.shape} from {p}")
+
+    return arr
+
 
 
 def main():
