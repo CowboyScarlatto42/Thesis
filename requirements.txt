@@ -1,0 +1,10 @@
+# NeuS requirements with newer versions
+numpy>=1.21,<2.0
+trimesh>=3.9
+pyhocon>=0.3.57
+icecream>=2.1.0
+opencv-python>=4.5
+tqdm>=4.50
+scipy>=1.7,<2.0
+matplotlib>=3.3
+#PyMCubes==0.1.2 
