@@ -67,4 +67,13 @@ Useful scripts:
 - `validate_geometry_proxy_on_mesh.py`
 - `correlate_mesh_metrics_distance_proxy.py`
 
+### Custom CORTO scripts
+
+- `corto_custom/`: custom scripts developed on top of the original CORTO
+  repository for spacecraft scenario generation, Sun/phase-angle diagnostics,
+  Blender mask rendering, and the custom CORTO tutorial used in this work.
+
+This folder intentionally contains only the custom code to be added to an
+existing CORTO checkout. It does not duplicate the full CORTO repository,
+virtual environments, generated outputs, or cache files.
 
