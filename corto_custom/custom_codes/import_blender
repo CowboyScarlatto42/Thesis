@@ -1,0 +1,67 @@
+import bpy
+import json
+
+"""
+Import CORTO geometry poses into an existing Blender scene.
+
+Run this helper inside Blender after opening a scene containing the camera,
+target body, and Sun objects. The script reads a CORTO `geometry.json`, assigns
+the camera/body/Sun pose at each frame, and inserts location and quaternion
+keyframes.
+
+Update `path` and the Blender object names before running it on a different
+scenario.
+"""
+
+
+# ============================================================
+# Input geometry and scene objects
+# ============================================================
+
+path = "/Users/martino/Desktop/Tesi/codes/corto/input/S10_Spacecraft/geometry/geometry.json"
+
+with open(path) as f:
+    data = json.load(f)
+
+cam_pos = data["camera"]["position"]
+cam_ori = data["camera"]["orientation"]
+body_pos = data["body"]["position"]
+body_ori = data["body"]["orientation"]
+sun_pos = data["sun"]["position"]
+sun_ori = data["sun"]["orientation"]
+
+cam = bpy.data.objects["WFOV_Camera"]
+body = bpy.data.objects["Osiris_rex"]  # Change to the body object name in the .blend file.
+sun = bpy.data.objects["Sun"]
+
+cam.rotation_mode = 'QUATERNION'
+body.rotation_mode = 'QUATERNION'
+sun.rotation_mode = 'QUATERNION'
+
+
+# ============================================================
+# Keyframe insertion
+# ============================================================
+
+for i in range(len(cam_pos)):
+
+    frame = i + 1
+    bpy.context.scene.frame_set(frame)
+
+    cam.location = cam_pos[i]
+    cam.keyframe_insert("location")
+
+    cam.rotation_quaternion = cam_ori[i]
+    cam.keyframe_insert("rotation_quaternion")
+
+    body.location = body_pos[i]
+    body.keyframe_insert("location")
+
+    body.rotation_quaternion = body_ori[i]
+    body.keyframe_insert("rotation_quaternion")
+
+    sun.location = sun_pos[i]
+    sun.keyframe_insert("location")
+
+    sun.rotation_quaternion = sun_ori[i]
+    sun.keyframe_insert("rotation_quaternion")

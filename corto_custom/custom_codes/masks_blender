@@ -1,0 +1,85 @@
+import bpy
+import os
+
+"""
+Render binary object masks from an animated Blender scene.
+
+Run this helper inside Blender after the CORTO trajectory has been imported.
+The script enables the object-index pass, creates a compositor ID-mask branch,
+and renders one mask image per frame for the selected target object.
+
+Update `OUTPUT_DIR` and `OBJECT_NAME` before running it on a different scene.
+"""
+
+
+# ============================================================
+# Configuration
+# ============================================================
+
+OUTPUT_DIR = "/Users/martino/Desktop/Tesi/codes/corto/output/S10_Spacecraft/masks"
+OBJECT_NAME = "Osiris_rex"  # Change to the body object name in the .blend file.
+
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+scene = bpy.context.scene
+view_layer = bpy.context.view_layer
+
+# ============================================================
+# Render settings and object-index pass
+# ============================================================
+
+scene.render.engine = "CYCLES"
+
+obj = bpy.data.objects[OBJECT_NAME]
+obj.pass_index = 1
+
+view_layer.use_pass_object_index = True
+
+# ============================================================
+# Compositor setup
+# ============================================================
+
+scene.use_nodes = True
+tree = scene.node_tree
+nodes = tree.nodes
+links = tree.links
+
+nodes.clear()
+
+rl = nodes.new("CompositorNodeRLayers")
+rl.location = (-400, 0)
+
+id_mask = nodes.new("CompositorNodeIDMask")
+id_mask.location = (-100, 0)
+id_mask.index = 1
+id_mask.use_antialiasing = False
+
+file_output = nodes.new("CompositorNodeOutputFile")
+file_output.location = (200, 0)
+file_output.base_path = OUTPUT_DIR
+file_output.format.file_format = "PNG"
+file_output.format.color_mode = "BW"
+file_output.format.color_depth = "8"
+file_output.file_slots[0].path = "mask_"
+
+links.new(rl.outputs["IndexOB"], id_mask.inputs["ID value"])
+links.new(id_mask.outputs["Alpha"], file_output.inputs[0])
+
+# ============================================================
+# Render loop
+# ============================================================
+
+start = scene.frame_start
+end = scene.frame_end
+
+for frame in range(start, end + 1):
+
+    scene.frame_set(frame)
+
+    file_output.file_slots[0].path = f"mask_{frame - 1:06d}_"
+
+    print("Rendering mask frame", frame)
+
+    bpy.ops.render.render(write_still=True)
+
+print("Done.")
