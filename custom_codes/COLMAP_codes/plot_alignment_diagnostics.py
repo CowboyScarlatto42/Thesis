@@ -174,8 +174,8 @@ def plot_trajectories(
         "orbit2": "#D55E00",
     }
     labels = {
-        "orbit1": "safety ellipse 1",
-        "orbit2": "safety ellipse 2",
+        "orbit1": "safety ellipse",
+        "orbit2": "secondary trajectory",
     }
 
     fig = plt.figure(figsize=(9, 8))
@@ -209,7 +209,7 @@ def plot_trajectories(
         xlabel="V-BAR X [m]",
         ylabel="-H-BAR Y [m]",
         zlabel="R-BAR Z [m]",
-        title="Safety ellipses in CORTO frame",
+        title="Trajectories in CORTO frame",
     )
     ax.legend(loc="best", fontsize=8)
     fig.tight_layout()

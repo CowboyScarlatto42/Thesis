@@ -275,7 +275,7 @@ R_E = 6371e3  # Earth radius in m
 h = 500e3     # altitude in m
 a = R_E + h  # semi-major axis in m
 
-# Safety ellipse 1 ROE parameters.
+# Safety ellipse ROE parameters.
 delta_a = 0
 delta_lambda_0 = 0 / a
 delta_ex = 0 / a
@@ -284,7 +284,7 @@ delta_ix = 0 / a
 delta_iy = 15 / a
 
 
-# Safety ellipse 2 ROE parameters.
+# Secondary trajectory ROE parameters.
 #delta_a = 0
 #delta_lambda_0 = 0 / a
 #delta_ex = 5 / a

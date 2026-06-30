@@ -48,12 +48,12 @@ RTN_TO_LVLH = np.array(
 CASES = {
     "complex_light": {
         "case": "S10_Spacecraft_Complex_Light",
-        "label": "safety ellipse 1",
+        "label": "safety ellipse",
         "color": "#0072B2",
     },
     "orbit_2": {
         "case": "S10_Spacecraft_Orbit_2",
-        "label": "safety ellipse 2",
+        "label": "secondary trajectory",
         "color": "#D55E00",
     },
     "orbit_2_70": {
@@ -232,7 +232,7 @@ def plot_orbit_2_with_two_suns(data: dict[str, dict[str, np.ndarray]], out_dir: 
         orbit[:, 2],
         color=CASES["orbit_2"]["color"],
         linewidth=2.2,
-        label="camera orbit",
+        label="secondary trajectory",
     )
     plot_frame_markers(ax, orbit, target)
     plot_sun_camera_offsets(
@@ -254,7 +254,7 @@ def plot_orbit_2_with_two_suns(data: dict[str, dict[str, np.ndarray]], out_dir: 
 
     limits_points = np.vstack([orbit, np.asarray(extra_points)])
     set_equal_3d_axes(ax, limits_points)
-    style_3d_axis(ax, "Safety ellipse two with both illumination conditions")
+    style_3d_axis(ax, "Secondary trajectory with both illumination conditions")
     ax.legend(loc="upper left", frameon=True, fontsize=9)
     save_figure(fig, out_dir / "orbit_2_two_suns.png", dpi)
 
@@ -285,7 +285,7 @@ def plot_trajectory_comparison(data: dict[str, dict[str, np.ndarray]], out_dir: 
     limits_points = np.vstack([complex_data["camera"], orbit_data["camera"], target])
     radius = set_equal_3d_axes(ax, limits_points)
     plot_lvh_reference_axes(ax, radius * 0.45)
-    style_3d_axis(ax, "two orbit extension")
+    style_3d_axis(ax, "Safety ellipse and secondary trajectory")
     ax.legend(loc="upper left", frameon=True, fontsize=9)
     save_figure(fig, out_dir / "roe_trajectory_comparison.png", dpi)
 
@@ -305,14 +305,14 @@ def plot_safety_ellipse_1(data: dict[str, dict[str, np.ndarray]], out_dir: Path,
         camera[:, 2],
         color=CASES["complex_light"]["color"],
         linewidth=2.2,
-        label="safety ellipse 1",
+        label="safety ellipse",
     )
     ax.scatter(*target, color="#D62728", s=70, depthshade=False, label="target", zorder=5)
 
     limits_points = np.vstack([camera, target])
     radius = set_equal_3d_axes(ax, limits_points)
     plot_lvh_reference_axes(ax, radius * 0.45)
-    style_3d_axis(ax, "safety ellipse 1")
+    style_3d_axis(ax, "Safety ellipse")
     ax.legend(loc="upper left", frameon=True, fontsize=9)
     save_figure(fig, out_dir / "safety_ellipse_1.png", dpi)
 
