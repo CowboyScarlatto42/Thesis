@@ -1,4 +1,4 @@
-# Thesis Code - NeuS Experiments
+# Thesis: Multi-View Neural 3D Reconstruction of Unknown Spacecraft Targets in Autonomous Rendezvous
 
 This repository contains the code used for the thesis experiments based on
 NeuS. It is a unified version of the two working folders used during
@@ -6,12 +6,13 @@ development:
 
 - `Ablation_test`: preprocessing, COLMAP/CORTO utilities, mesh metrics,
   ablation-related postprocessing, and thesis plots.
-- `BayesSDF_test`: experimental geometric sensitivity / uncertainty proxy
+- `BayesSDF_test`: experimental geometric sensitivity/uncertainty proxy
   inspired by BayesSDF.
 
-The code is organized as a single NeuS-based project so that standard NeuS
-training, mesh extraction, postprocessing, and uncertainty experiments can be
-run from the same folder.
+This repository is based on the official NeuS implementation by Peng Wang et al. 
+Original code is distributed under the MIT License. 
+The thesis-specific additions include CORTO preprocessing, 
+COLMAP alignment utilities, mesh-evaluation scripts, and the geometry-oriented uncertainty proxy.
 
 ## Main Components
 
@@ -41,11 +42,11 @@ standard NeuS renderer.
   table generation.
 - `custom_codes/postprocessing/thesis_plots.py`: thesis plot generation.
 - `custom_codes/postprocessing/analyze_realistic_colmap_pose_errors.py`:
-  residual pose-error analysis for the realistic COLMAP-based datasets.
+  Residual pose-error analysis for the realistic COLMAP-based datasets.
 - `custom_codes/postprocessing/colormap.py`: colormap utilities used by the
   postprocessing scripts.
 
-### Geometric sensitivity / uncertainty proxy
+### Geometric sensitivity/uncertainty proxy
 
 - `models/deformation_grid.py`: dense trilinear deformation grid in normalized
   NeuS coordinates.
@@ -55,7 +56,7 @@ standard NeuS renderer.
 The uncertainty pipeline introduces an optional deformation grid in the NeuS
 renderer and measures how much rendered RGB values change under infinitesimal
 local geometric perturbations. The accumulated quantity is `H`, a
-Laplace-inspired local sensitivity / curvature proxy. Low `H` values indicate a
+Laplace-inspired local sensitivity/curvature proxy. Low `H` values indicate a
 flatter local response and are visualized through the uncertainty-oriented score
 `U = -log10(H + eps)`. This is not a calibrated Bayesian variance.
 
@@ -71,7 +72,7 @@ Useful scripts:
 
 - `corto_custom/`: custom scripts developed on top of the original CORTO
   repository for spacecraft scenario generation, Sun/phase-angle diagnostics,
-  Blender mask rendering, and the custom CORTO tutorial used in this work.
+  Blender mask rendering and the custom CORTO tutorial used in this work.
 
 This folder intentionally contains only the custom code to be added to an
 existing CORTO checkout. It does not duplicate the full CORTO repository,
